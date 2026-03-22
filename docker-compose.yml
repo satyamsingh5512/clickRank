@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: echo stat | nc localhost 2181
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: nc -z localhost 9092 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+    networks:
+      - clickrank-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6380:6379"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: clickrank
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: clickrank_db
+    ports:
+      - "5433:5432"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clickrank -d clickrank_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Application Services
+  clickrank-backend:
+    image: clickrank-service:latest
+    container_name: clickrank-backend
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/clickrank_db
+      SPRING_DATASOURCE_USERNAME: clickrank
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    networks:
+      - clickrank-network
+
+  api-gateway:
+    image: clickrank-api-gateway:latest
+    container_name: api-gateway
+    depends_on:
+      - clickrank-backend
+      - redis
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_HOST: redis
+      CLICKRANK_BACKEND_URI: http://clickrank-backend:8081
+    networks:
+      - clickrank-network
+
+  analytics-service:
+    image: clickrank-analytics-service:latest
+    container_name: analytics-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - clickrank-network
+
+  ml-ranking-service:
+    image: clickrank-ml-service:latest
+    container_name: ml-ranking-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - clickrank-network
+
+  frontend:
+    image: clickrank-frontend:latest
+    container_name: frontend
+    depends_on:
+      - api-gateway
+    ports:
+      - "3000:80"
+    networks:
+      - clickrank-network
+
+networks:
+  clickrank-network:
+    driver: bridge
