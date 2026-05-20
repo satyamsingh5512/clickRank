@@ -1,32 +1,32 @@
-# ClickRank 🚀
+# ClickRank
 
 ## System Design (Architecture)
 ClickRank uses a distributed **Two-Stage Learning-to-Rank pipeline** that combines Java microservices, a Python ML engine, and a Kafka streaming ecosystem.
 
 ```mermaid
 flowchart TB
-    Client["📱 React Frontend (Vite)"] -- "1. Search / Click" --> Gateway["🌐 API Gateway (Rate Limiting)"]
+    Client["React Frontend (Vite)"] -- "1. Search / Click" --> Gateway["API Gateway (Rate Limiting)"]
 
     subgraph "Real-Time Serving Layer"
-        Gateway -- "2. GET /search" --> Orchestrator["⚙️ LTR Orchestrator (Spring Boot)"]
+        Gateway -- "2. GET /search" --> Orchestrator["LTR Orchestrator (Spring Boot)"]
         
-        Orchestrator -- "3. L1 Candidate Retrieval" --> Cache[("⚡ Redis (ZSet Cache)")]
-        Orchestrator -. "Fallback" .-> DB[("🐘 PostgreSQL")]
+        Orchestrator -- "3. L1 Candidate Retrieval" --> Cache[("Redis (ZSet Cache)")]
+        Orchestrator -. "Fallback" .-> DB[("PostgreSQL")]
         
-        Orchestrator -- "4. Batch Feature Lookup" --> FeatureStore[("🗄️ Redis Feature Store")]
+        Orchestrator -- "4. Batch Feature Lookup" --> FeatureStore[("Redis Feature Store")]
         
-        Orchestrator -- "5. Re-rank (Circuit Breaker)" --> MLService["🧠 ML Inference (FastAPI)"]
+        Orchestrator -- "5. Re-rank (Circuit Breaker)" --> MLService["ML Inference (FastAPI)"]
         MLService -- "XGBoost / ONNX" --> MLService
     end
 
     subgraph "Event Streaming & Analytics Layer"
-        Gateway -- "POST /clicks" --> Ingest["📥 Click Ingestion"]
-        Ingest -- "Produce" --> Kafka{"⚡ Kafka Cluster"}
+        Gateway -- "POST /clicks" --> Ingest["Click Ingestion"]
+        Ingest -- "Produce" --> Kafka{"Kafka Cluster"}
         
-        Kafka -- "Consume" --> FeatureWriter["🔄 Feature Writer (EMA)"]
+        Kafka -- "Consume" --> FeatureWriter["Feature Writer (EMA)"]
         FeatureWriter -- "Update CTR/Age" --> FeatureStore
         
-        Kafka -- "Process" --> Analytics["📊 Kafka Streams (5m Window)"]
+        Kafka -- "Process" --> Analytics["Kafka Streams (5m Window)"]
         Analytics -- "Trending Data" --> Cache
     end
 
