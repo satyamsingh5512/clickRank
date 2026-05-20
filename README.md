@@ -1,118 +1,111 @@
-# ClickRank
+# ClickRank 🚀
 
-ClickRank is an event-driven clickstream ranking platform that ingests user interaction events, updates search rankings in real time, and serves low-latency ranked results through a resilient microservice architecture.
+ClickRank is an enterprise-grade, event-driven Learning-to-Rank (LTR) search and recommendation platform. It features a distributed microservices architecture, a real-time machine learning inference pipeline, and a premium "Enterprise Dark Mode" frontend.
 
-## System Design
+---
 
-```mermaid
-flowchart LR
-    U[Users / Clients] --> FE[Frontend\nReact + Vite]
-    FE --> GW[API Gateway\nRate Limiter + Circuit Breaker]
+## 🏗 System Architecture & Design
 
-    subgraph Core Services
-      BE[ClickRank Backend\nSpring Boot]
-      AN[Analytics Service\nKafka Streams]
-      ML[ML Ranking Service\nFastAPI]
-    end
+ClickRank implements a **Two-Stage Learning-to-Rank Pipeline** designed for sub-35ms p95 latency at 3,000 QPS.
 
-    GW --> BE
-    GW --> ML
+### 1. Frontend (React + Tailwind v4 + Framer Motion)
+- **Omnibox Hero Search:** `Cmd+K` accessible search with glassmorphic design, debounced input, and typing placeholder animations.
+- **Bento-Box Results:** Highly interactive UI with AI Relevance Score badges and micro-interactions on hover.
+- **Real-Time Trending:** A Kafka-backed sidebar displaying live trending queries.
+- **Dev Telemetry Overlay:** A toggleable mode exposing raw XGBoost feature matrices, Resilience4j circuit breaker states, and exact latency breakdowns per request.
 
-    subgraph Event Backbone
-      ZK[Zookeeper]
-      K[Kafka]
-      KD[Kafdrop]
-    end
+### 2. The LTR Orchestrator (Java Spring Boot)
+- **L1 Retrieval:** Fetches initial candidate IDs via a Redis ZSet (cached) or falls back to a PostgreSQL lookup.
+- **Feature Store & Pipelining:** Uses an Exponential Moving Average (EMA) to update item CTRs in real-time via Kafka. Fetches candidate features using a single-trip Redis `MGET` pipeline.
+- **L2 Re-ranking:** Orchestrates the HTTP call to the ML Service.
+- **Fault Tolerance:** Wrapped in a **Resilience4j Circuit Breaker**. If the ML service times out (>25ms SLO) or fails, the backend degrades gracefully to the L1 retrieval or a global trending ZSet fallback.
 
-    BE -->|Produce: raw-click-events| K
-    K -->|Consume + Retry| BE
-    BE -->|DLQ: raw-click-events-dlt| K
-    K --> AN
-    KD --- K
-    ZK --- K
+### 3. ML Inference Service (Python + FastAPI)
+- **Training Pipeline:** An offline script (`scripts/train_and_export.py`) trains a pairwise `XGBRanker` model (optimizing for `rank:ndcg`) using a 4-dimensional feature vector.
+- **Inference Engine:** Compiles the XGBoost model into an ONNX binary (`models/ranker.onnx`) for ultra-low latency, multi-threaded inference using `onnxruntime`.
 
-    subgraph Data Layer
-      R[(Redis\nSorted Sets + Idempotency Keys)]
-      P[(PostgreSQL\nSearch Metadata)]
-    end
+### 4. Clickstream Ingestion & Analytics
+- **Kafka Ecosystem:** Real-time click events are ingested through the API Gateway, dropped onto a Kafka topic, and consumed asynchronously by the backend to update the Redis feature store.
+- **Kafka Streams:** A separate analytics service runs a 5-minute tumbling window topology to aggregate and emit trending search queries.
 
-    BE <--> R
-    BE <--> P
-    ML -. optional feature store .-> P
+---
 
-    BE -->|GET /api/search| GW
-    GW --> FE
+## 📂 Repository Structure
+
+```text
+clickRank/
+├── apps/
+│   └── frontend/                # React, Vite, Tailwind v4, Framer Motion
+├── services/
+│   ├── clickrank-backend/       # Core LTR orchestrator & feature writer (Spring Boot)
+│   ├── api-gateway/             # Gateway service & Rate Limiting
+│   ├── analytics-service/       # Kafka Streams analytics topology
+│   └── ml-ranking-service/      # Python FastAPI + ONNX Runtime scoring service
+├── infra/
+│   └── docker-compose.yml       # Full local stack orchestration (Kafka, Redis, Postgres)
+├── scripts/
+│   ├── train_and_export.py      # XGBoost pairwise training & ONNX export
+│   ├── seed_redis_features.py   # Populates Redis with 2,000 synthetic feature vectors
+│   ├── chaos_test_circuit_breaker.sh # Automated Resilience4j failover validation
+│   └── build-all.sh             # Builds all Docker images
+├── tests/load/                  # k6 load testing scripts
+└── README.md
 ```
 
-## What It Does
+---
 
-- Ingests high-throughput click events via REST and Kafka.
-- Processes click events asynchronously with event-driven ranking updates.
-- Maintains real-time leaderboards using Redis Sorted Sets.
-- Serves ranked search results with cache-first reads and database fallback.
-- Produces near-real-time trend analytics using Kafka Streams windowed aggregations.
-- Exposes an ML ranking endpoint for score enrichment workflows.
+## 🚀 Quick Start / Local Runbook
 
-## How It Works
+Follow these steps to spin up the entire distributed system locally.
 
-1. A click event is submitted to ingestion APIs (`/api/click` or `/api/clicks`).
-2. The backend publishes events to Kafka topics (`raw-click-events`, `clickstream-events`).
-3. Kafka consumers process events concurrently and update ranking state in Redis.
-4. Ranking updates use atomic Redis logic with score decay and increment behavior.
-5. Idempotency keys in Redis prevent duplicate processing during retries.
-6. Failed consumer attempts are retried and routed to a Dead Letter Topic (`raw-click-events-dlt`).
-7. Search requests read top-ranked IDs from Redis and hydrate metadata from PostgreSQL.
-8. On cache miss, the service falls back to PostgreSQL to preserve response continuity.
-
-## Service Topology (10 Services)
-
-1. Frontend (React)
-2. API Gateway
-3. ClickRank Backend
-4. Analytics Service
-5. ML Ranking Service
-6. Kafka
-7. Zookeeper
-8. Redis
-9. PostgreSQL
-10. Kafdrop
-
-## Reliability and Performance Patterns
-
-- Event-driven decoupling with Kafka producer/consumer boundaries.
-- Consumer retries with exponential backoff and DLQ isolation.
-- Idempotent event handling using Redis `SETNX`-style keys with TTL.
-- Distributed rate limiting and circuit breakers at the API Gateway.
-- Cache-aside retrieval path for predictable latency under load.
-- O(log N) ranking updates via Redis Sorted Sets.
-
-## Key APIs
-
-- `POST /api/click` -> ingest click events for ranking pipeline
-- `POST /api/clicks` -> ingest clickstream contract events
-- `GET /api/search?q=<query>&limit=<n>` -> fetch ranked search results
-- `GET /api/search/trending` -> fetch top trending queries
-- `POST /rank` (ML service) -> rank candidate items with model scoring
-
-## Technology Stack
-
-- Java 17, Spring Boot, Spring Cloud Gateway
-- Python, FastAPI, scikit-learn
-- Apache Kafka, Kafka Streams
-- Redis, PostgreSQL
-- React, TypeScript, Vite
-- Docker Compose, Kubernetes manifests
-
-## Local Run
-
+### 1. Train the ML Model
+Before starting, generate the ONNX model artifact. The ML container mounts the `models/` directory.
 ```bash
-./build-all.sh
-docker compose up -d
-./test-system.sh
+pip install xgboost==2.1.4 onnxmltools==1.12.0 skl2onnx==1.17.0 onnxruntime==1.20.1
+python3 scripts/train_and_export.py
 ```
 
-## Resume Alignment
+### 2. Build and Start Infrastructure
+Build the Java/Python/Node containers and start the Kafka/Redis/Postgres ecosystem:
+```bash
+chmod +x scripts/build-all.sh
+./scripts/build-all.sh
+docker compose -f infra/docker-compose.yml up -d
+```
+*(Wait a moment for Kafka and PostgreSQL to become fully healthy).*
 
-- Architected a 10-service event-driven pipeline to process high-throughput clickstream workloads using Kafka.
-- Implemented Redis Sorted Set-based ranking with O(log N) score updates for real-time leaderboards.
-- Enforced reliability controls through Kafka retry + dead-letter routing and idempotent event consumption.
+### 3. Seed the Feature Store
+Pre-populate the Redis feature store to avoid cold-start cache misses during search:
+```bash
+pip install redis
+python3 scripts/seed_redis_features.py
+```
+
+### 4. Access the Platform
+- **Frontend UI:** [http://localhost:5173](http://localhost:5173) (if running via `npm run dev`) or check Docker mappings.
+- **API Gateway:** [http://localhost:8080](http://localhost:8080)
+- **Kafka UI (Kafdrop):** [http://localhost:9000](http://localhost:9000)
+
+---
+
+## 🧪 Testing & Validation
+
+### Circuit Breaker Chaos Testing
+To prove the Resilience4j fallback path works within the strict latency budget, run the chaos test. This script artificially pauses the ML container, fires requests to trip the circuit OPEN, verifies the fallback latency, and then unpauses the container to ensure it heals to CLOSED.
+```bash
+chmod +x scripts/chaos_test_circuit_breaker.sh
+./scripts/chaos_test_circuit_breaker.sh
+```
+
+### Load Testing
+Validate the `p95 < 35ms` SLA at 3,000 QPS using k6:
+```bash
+k6 run -e BASE_URL=http://localhost:8080 -e ML_BASE_URL=http://localhost:8084 tests/load/search-and-click.k6.js
+```
+
+---
+
+## 🔒 Production & CI/CD
+- **Kubernetes:** Production deployment manifests are available in `infra/k8s/`.
+- **CI/CD:** GitHub Actions workflows (`.github/workflows/`) enforce Trivy security scans, SBOM generation, and multi-arch Docker builds on PRs.
+- **Observability:** Metrics are exposed via Prometheus endpoints `/actuator/prometheus` on all Spring Boot services, ready for Grafana scraping.
