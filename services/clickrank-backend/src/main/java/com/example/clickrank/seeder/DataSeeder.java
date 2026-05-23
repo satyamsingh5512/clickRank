@@ -2,6 +2,7 @@ package com.example.clickrank.seeder;
 
 import com.example.clickrank.model.SearchResult;
 import com.example.clickrank.repository.SearchResultRepository;
+import com.example.clickrank.service.FeatureWriterService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 /**
@@ -21,6 +23,7 @@ import java.util.UUID;
 public class DataSeeder {
 
     private final SearchResultRepository repository;
+    private final FeatureWriterService featureWriterService;
 
     @PostConstruct
     public void seed() {
@@ -59,6 +62,18 @@ public class DataSeeder {
         
         repository.saveAll(results);
         log.info("Successfully seeded {} items.", results.size());
+
+        // Seed the Redis feature store with realistic initial CTR values
+        // so MlRankingClient finds warm features from the very first search.
+        Random rng = new Random(42L);
+        for (SearchResult r : results) {
+            // Generate CTR that correlates with item index (lower items = higher CTR)
+            // to create a learnable signal matching the training data heuristics.
+            double ctr = 0.05 + rng.nextDouble() * 0.30;  // 5%-35% CTR
+            Instant createdAt = r.getCreatedAt() != null ? r.getCreatedAt() : Instant.now();
+            featureWriterService.upsertFeatures(r.getId(), ctr, createdAt);
+        }
+        log.info("Feature store seeded for {} items.", results.size());
     }
     
     private String capitalize(String str) {
