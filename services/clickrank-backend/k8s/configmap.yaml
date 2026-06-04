@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickrank-config
+  labels:
+    app: clickrank
+data:
+  DB_USERNAME: clickrank
+  REDIS_USERNAME: default
+  # Sensitive values like DB_PASSWORD, REDIS_PASSWORD, and OAUTH2_ISSUER_URI 
+  # should be injected via Kubernetes Secrets, not ConfigMaps.
+  # Example:
+  # DB_URL: jdbc:postgresql://postgres-service:5432/clickrank_db
+  # REDIS_HOST: redis-cluster-service
+  # KAFKA_BOOTSTRAP_SERVERS: kafka-broker:9092
