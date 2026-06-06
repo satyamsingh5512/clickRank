@@ -1,0 +1,19 @@
+# Default owner for everything in the repository
+* @clickrank/platform
+
+# Frontend
+/apps/frontend/ @clickrank/frontend
+
+# Core backend services
+/services/clickrank-backend/ @clickrank/backend
+/services/api-gateway/ @clickrank/backend
+/services/analytics-service/ @clickrank/backend
+/services/ml-ranking-service/ @clickrank/ml
+
+# Infrastructure and deployment
+/infra/ @clickrank/platform
+/scripts/ @clickrank/platform
+
+# CI/CD and governance
+/.github/ @clickrank/platform
+/docs/ @clickrank/platform

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - name: Install deps
+        run: npm ci --legacy-peer-deps
+      - name: Build
+        run: npm run build
+
+  java-services:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - services/clickrank-backend
+          - services/api-gateway
+          - services/analytics-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Test
+        run: mvn -B -ntp -f "${{ matrix.service }}/pom.xml" test
+
+  ml-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ml-ranking-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Smoke import
+        run: python -c "import main; print('ml-service import ok')"
+
+  docker-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t clickrank-service:ci services/clickrank-backend
+      - name: Trivy scan (backend)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: clickrank-service:ci
+          format: sarif
+          output: trivy-backend.sarif
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-backend.sarif
+      - name: Generate SBOM (backend)
+        uses: anchore/sbom-action@v0
+        with:
+          image: clickrank-service:ci
+          format: spdx-json
+          output-file: backend-sbom.spdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-sbom
+          path: backend-sbom.spdx.json
