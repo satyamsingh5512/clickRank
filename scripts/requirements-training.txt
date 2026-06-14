@@ -1,0 +1,9 @@
+# Training dependencies — run ONCE offline to produce models/ranker.onnx
+# Install with: pip install -r requirements-training.txt
+xgboost>=2.0.3
+onnxmltools>=1.12.0
+onnxconverter-common>=1.14.0
+onnxruntime>=1.20.1
+skl2onnx>=1.16.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
