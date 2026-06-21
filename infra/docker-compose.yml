@@ -1,0 +1,175 @@
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  zookeeper:
+    image: docker.io/confluentinc/cp-zookeeper:7.5.0
+    container_name: clickrank-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: echo stat | nc localhost 2181
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: docker.io/confluentinc/cp-kafka:7.5.0
+    container_name: clickrank-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: nc -z localhost 9092 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafdrop:
+    image: docker.io/obsidiandynamics/kafdrop:latest
+    container_name: clickrank-kafdrop
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+    networks:
+      - clickrank-network
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: clickrank-redis
+    ports:
+      - "6380:6379"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: docker.io/library/postgres:15-alpine
+    container_name: clickrank-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clickrank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-clickrank_db}
+    ports:
+      - "5433:5432"
+    networks:
+      - clickrank-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clickrank} -d ${POSTGRES_DB:-clickrank_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Application Services ────────────────────────────────────────────────────
+  clickrank-backend:
+    image: clickrank-service:latest
+    container_name: clickrank-backend-app
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${DB_HOST:-postgres}:${DB_PORT:-5432}/${POSTGRES_DB:-clickrank_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-clickrank}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-password}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT:-6379}
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ml-ranking-service:8084}
+    networks:
+      - clickrank-network
+
+  api-gateway:
+    image: clickrank-api-gateway:latest
+    container_name: clickrank-api-gateway
+    depends_on:
+      - clickrank-backend
+      - redis
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_USERNAME: ${REDIS_USERNAME:-default}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CLICKRANK_BACKEND_URI: ${CLICKRANK_BACKEND_URI:-http://clickrank-backend:8081}
+      OAUTH2_ISSUER_URI: ${OAUTH2_ISSUER_URI:-}
+    networks:
+      - clickrank-network
+
+  analytics-service:
+    image: clickrank-analytics-service:latest
+    container_name: clickrank-analytics-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
+    networks:
+      - clickrank-network
+
+  ml-ranking-service:
+    image: clickrank-ml-service:latest
+    container_name: clickrank-ml-ranking-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      POSTGRES_URL: ${POSTGRES_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # ONNX model path inside the container (maps to the host models/ volume)
+      ONNX_MODEL_PATH: /app/models/ranker.onnx
+    volumes:
+      # Live-mount the models/ directory so the ONNX artifact can be updated
+      # without rebuilding the Docker image (useful for model rollouts).
+      - ${REPO_ROOT:-.}/models:/app/models:ro
+    networks:
+      - clickrank-network
+
+  frontend:
+    image: clickrank-frontend:latest
+    container_name: clickrank-frontend
+    depends_on:
+      - api-gateway
+    ports:
+      - "3000:80"
+    networks:
+      - clickrank-network
+
+networks:
+  clickrank-network:
+    driver: bridge
