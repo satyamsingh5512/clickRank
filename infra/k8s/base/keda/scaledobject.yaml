@@ -1,0 +1,20 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: clickrank-kafka-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: clickrank-deployment # Which deployment to scale
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-broker-service:9092
+        consumerGroup: click-processor-group
+        topic: raw-click-events
+        lagThreshold: "100" # Target 100 messages of lag per partition
+        offsetResetPolicy: earliest
