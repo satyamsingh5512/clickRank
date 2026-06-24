@@ -1,0 +1,14 @@
+{
+  "name": "postgres-sink-connector",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+    "topics": "raw-click-events",
+    "connection.url": "jdbc:postgresql://postgres-primary:5432/clickrank_db",
+    "connection.user": "clickrank",
+    "connection.password": "password",
+    "insert.mode": "insert",
+    "auto.create": "true",
+    "table.name.format": "olap_click_events"
+  }
+}
