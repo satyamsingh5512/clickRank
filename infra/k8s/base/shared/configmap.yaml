@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickrank-config
+  labels:
+    app.kubernetes.io/name: clickrank
+
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  CLICKRANK_BACKEND_URI: "http://clickrank-service:8081"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  DB_HOSTS: "postgres:5432"
+  DB_USERNAME: "clickrank"
+  POSTGRES_DB: "clickrank_db"
+  GATEWAY_REQUIRE_AUTH: "true"
