@@ -1,0 +1,23 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: analytics-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    streams:
+      application-id: analytics-stream-processor
+      properties:
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        # Exactly once processing semantics for streams
+        processing.guarantee: exactly_once_v2
+        # Phase 7: State store dir for local RocksDB
+        state.dir: /tmp/kafka-streams
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
