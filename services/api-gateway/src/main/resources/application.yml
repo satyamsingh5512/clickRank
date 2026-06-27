@@ -1,0 +1,111 @@
+server:
+  port: 8080 # Gateway runs on standard port 8080
+
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD:}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OAUTH2_ISSUER_URI:http://localhost:8082/realms/clickrank}
+  cloud:
+    gateway:
+      routes:
+        # 1. Click Ingestion Route
+        - id: clickstream-ingestion-service
+          uri: ${CLICKRANK_BACKEND_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/clicks/**
+            - Method=POST
+          filters:
+            # Redis-backed distributed rate limiter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10 # tokens added per second
+                redis-rate-limiter.burstCapacity: 20 # max burst capacity
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            # Circuit Breaker to prevent cascading failures if backend is down
+            - name: CircuitBreaker
+              args:
+                name: clickServiceCircuitBreaker
+                fallbackUri: forward:/fallback/click
+
+        # 1b. Backward-compatible click endpoint
+        - id: click-ingestion-legacy-service
+          uri: ${CLICKRANK_BACKEND_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/click/**
+            - Method=POST
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            - name: CircuitBreaker
+              args:
+                name: clickServiceCircuitBreaker
+                fallbackUri: forward:/fallback/click
+
+        # 2. Search Retrieval Route
+        - id: search-retrieval-service
+          uri: ${CLICKRANK_BACKEND_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/search/**
+            - Method=GET
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            - name: CircuitBreaker
+              args:
+                name: searchServiceCircuitBreaker
+                fallbackUri: forward:/fallback/search
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# Resilience4j Circuit Breaker Configuration
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 20
+        permittedNumberOfCallsInHalfOpenState: 5
+        failureRateThreshold: 50 # open circuit if 50% fail
+        waitDurationInOpenState: 10000 # Wait 10s before half-open
+    instances:
+      clickServiceCircuitBreaker:
+        baseConfig: default
+      searchServiceCircuitBreaker:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 3s # Timeout backend calls after 3 seconds
+
+app:
+  security:
+    require-auth: ${GATEWAY_REQUIRE_AUTH:false}
