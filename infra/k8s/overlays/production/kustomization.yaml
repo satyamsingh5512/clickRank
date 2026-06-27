@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base/shared/configmap.yaml
+  - ../base/clickrank-service/deployment.yaml
+  - ../base/clickrank-service/pdb.yaml
+  - ../base/api-gateway/deployment.yaml
+  - ../base/api-gateway/ingress.yaml
+  - ../base/keda/scaledobject.yaml
+  - ../base/frontend/deployment.yaml
+  - ../base/frontend/service.yaml
+  - ../../ml-service.yaml
+  - ../base/observability/prometheus-rules.yaml
+  - ../base/cert-manager/cluster-issuer.yaml
+
+namespace: prod-clickrank
+
+patches:
+  - target:
+      kind: Deployment
+      name: clickrank-deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
