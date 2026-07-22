@@ -1,0 +1,2 @@
+user default on nopass ~* &* +@all
+user clickrank-service on >clickrank_secret_password ~rankings:* ~trending:* ~processed:* +@read +@write +@hash +@sortedset -@admin -@dangerous
