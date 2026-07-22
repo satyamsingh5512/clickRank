@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/clickrank_db
+    username: ${DB_USERNAME:clickrank}
+    password: ${DB_PASSWORD:password}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: null
+      password: null
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    properties:
+      security.protocol: PLAINTEXT
+      schema.registry.url: null
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: null
+
+# Disable OAuth2 for development
