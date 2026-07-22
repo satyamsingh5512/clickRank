@@ -1,0 +1,12 @@
+{
+  "namespace": "com.example.clickrank.avro",
+  "type": "record",
+  "name": "ClickEventAvro",
+  "fields": [
+    {"name": "userId", "type": "string"},
+    {"name": "query", "type": "string"},
+    {"name": "resultId", "type": "string"},
+    {"name": "sessionId", "type": "string"},
+    {"name": "timestamp", "type": "long", "logicalType": "timestamp-millis"}
+  ]
+}
