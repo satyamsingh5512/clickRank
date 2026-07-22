@@ -1,0 +1,140 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: clickrank
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # In production, this points to your Keycloak or Auth0 realm
+          issuer-uri: ${OAUTH2_ISSUER_URI:http://localhost:8082/realms/clickrank}
+  datasource:
+    # High Availability connection string supporting read-replicas.
+    # Routes read-only transactions to replica when targetServerType=preferSlave is used.
+    url: jdbc:postgresql://${DB_HOSTS:localhost:5432,localhost:5433}/clickrank_db?targetServerType=primary
+    username: ${DB_USERNAME:clickrank}
+    password: ${DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  data:
+    redis:
+      # ── Redis Mode Selection ─────────────────────────────────────────────────
+      # Set REDIS_MODE=cluster in production (Kubernetes) for 6-node Redis Cluster.
+      # Leave unset (or set to 'standalone') for local/docker-compose single-node.
+      #
+      # Standalone (default for docker-compose dev):
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD:}
+      #
+      # Cluster (enable by setting REDIS_CLUSTER_NODES env var in production):
+      # cluster:
+      #   nodes: ${REDIS_CLUSTER_NODES:localhost:6379}
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9093,localhost:9094}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+      sasl.jaas.config: ${KAFKA_JAAS_CONFIG:}
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8085}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: click-processor-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0  # 100% trace sampling for demonstration — reduce in prod
+
+logging:
+  level:
+    root: INFO
+    com.example.clickrank: DEBUG
+    io.github.resilience4j: INFO
+
+# ─── Ranking Engine ─────────────────────────────────────────────────────────
+ranking:
+  ttl-hours: 1
+  top-results: 10
+
+clickstream:
+  topic: clickstream-events
+
+# ─── ML Ranking Service Integration ─────────────────────────────────────────
+ml:
+  service:
+    base-url: ${ML_SERVICE_URL:http://ml-ranking-service:8084}
+  ranking:
+    top-n: 10
+
+# ─── Resilience4j Circuit Breaker — mlRankingService ─────────────────────────
+# Latency budget: the ML ONNX inference is expected to complete in <25ms.
+# Any call exceeding this threshold is counted as a "slow call".
+# When 75% of the last 20 calls are slow OR 50% result in errors,
+# the circuit opens and all requests are routed to the Redis ZSet fallback.
+#
+# State transition timeline:
+#   CLOSED  ──[50% failure | 75% slow]──► OPEN  (stays open for 10s)
+#   OPEN    ──[waitDurationInOpenState]──► HALF_OPEN
+#   HALF_OPEN ──[5 probe calls pass]──► CLOSED
+#
+resilience4j:
+  circuitbreaker:
+    instances:
+      mlRankingService:
+        # Sliding window: evaluate last 20 calls (count-based, not time-based)
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        # Open circuit if ≥50% of recent calls fail (exception or 5xx)
+        failureRateThreshold: 50.0
+        # Open circuit if ≥75% of recent calls are "slow" (>25ms)
+        slowCallRateThreshold: 75.0
+        # Hard latency budget for ML inference: 25ms
+        # Any call taking longer is counted toward the slow-call rate.
+        slowCallDurationThreshold: 25ms
+        # Time the circuit stays OPEN before moving to HALF_OPEN
+        waitDurationInOpenState: 10s
+        # Number of probe calls in HALF_OPEN before deciding to CLOSE/re-OPEN
+        permittedNumberOfCallsInHalfOpenState: 5
+        # Minimum calls before the failure rate is calculated (avoid false opens on startup)
+        minimumNumberOfCalls: 5
+        # Register health indicator for /actuator/health and /actuator/circuitbreakers
+        registerHealthIndicator: true
+        # Expose circuit breaker events in Actuator for Prometheus scraping
+        recordExceptions:
+          - java.lang.Exception
